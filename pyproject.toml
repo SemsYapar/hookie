@@ -49,3 +49,7 @@ hookie = [
     "stubs/*/*.c",
     "stubs/*/*.dll",
 ]
+
+[project.urls]
+Source = "https://github.com/SemsYapar/hookie"
+Issues = "https://github.com/SemsYapar/hookie/issues"
