@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hookie"
+version = "0.1.0"
+description = "Native x86/x64 inline hooking from pure Python on Windows and Linux"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Sems" }]
+keywords = [
+    "hooking",
+    "detour",
+    "trampoline",
+    "minhook",
+    "reverse-engineering",
+    "ctypes",
+    "x86",
+    "x64",
+]
+dependencies = [
+    "capstone>=5.0.8,<6",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Software Development :: Disassemblers",
+    "Topic :: Security",
+]
+
+[project.scripts]
+hookie = "hookie.packaging:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hookie*"]
+[tool.setuptools.package-data]
+hookie = [
+    "stubs/*/*.c",
+    "stubs/*/*.dll",
+]
