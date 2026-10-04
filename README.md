@@ -52,6 +52,28 @@ Optional build modes:
 --debug
 ```
 
+## Notepad hooking example
+
+The `examples/windows/notepad_hook/` example hooks Notepad's memory-mapped file read path. Notepad reads the file through `CreateFileMappingW` and `MapViewOfFile`, so the example hooks these APIs, creates a copy-on-write mapping/view, and modifies the mapped data without changing the original file.
+
+Build the payload DLL:
+
+```powershell
+hookie create-dll .\examples\windows\notepad_hook\
+```
+
+The command prints the generated DLL path, for example:
+
+```text
+Done -> C:\Users\sems\Desktop\codepy\hookie\builds\d977ac6719a5\hookie_stub.dll
+```
+
+Then inject it into Notepad:
+
+```powershell
+hookie inject-dll notepad.exe .\builds\d977ac6719a5\hookie_stub.dll
+```
+
 See `examples/` for examples. See `ARCHITECTURE.md` for the trampoline, payload, stub, CPython bootstrap, and runtime-reuse internals.
 
 ## Current limitations
