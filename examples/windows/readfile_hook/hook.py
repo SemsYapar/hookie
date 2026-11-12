@@ -38,7 +38,10 @@ if __name__ == "__main__":
         f.write("this is a non hooked text.")
 
     with open(target_file, "r") as f:
+        data = f.read()
+        print("test.txt data original: "+data)
         hook.enable()
         data = f.read()
+        print("test.txt data hooked: "+data)
         hook.disable()
-        print("test.txt data: "+data)
+        
