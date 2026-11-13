@@ -12,6 +12,12 @@ psapi = ctypes.windll.psapi
 kernelbase.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
 kernelbase.TerminateProcess.restype = wintypes.BOOL
 
+kernelbase.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+kernelbase.OpenProcess.restype = wintypes.HANDLE
+
+psapi.GetModuleBaseNameW.argtypes = [wintypes.HANDLE, wintypes.HMODULE, wintypes.LPWSTR, wintypes.DWORD]
+psapi.GetModuleBaseNameW.restype = wintypes.DWORD
+
 def get_pid_from_handle(h_process):
   class PROCESS_BASIC_INFORMATION(ctypes.Structure):
     _fields_ = [

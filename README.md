@@ -52,6 +52,13 @@ Optional build modes:
 --debug
 ```
 
+By default (without `--single-file`), the stub keeps its dependencies next to
+it on disk, under `deps/<id>/`, and needs that directory to be present at the
+absolute path it was built at in order to run. If you want to hand the built
+DLL/SO to someone else, or run it from a different location, build with
+`--single-file`: the payload is embedded in the stub itself and extracted to a
+temp directory at runtime, so no external `deps/` folder is needed.
+
 ## Notepad hooking example
 
 The `examples/windows/notepad_hook/` example hooks Notepad's memory-mapped file read path. Notepad reads the file through `CreateFileMappingW` and `MapViewOfFile`, so the example hooks these APIs, creates a copy-on-write mapping/view, and modifies the mapped data without changing the original file.
