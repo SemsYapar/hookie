@@ -4,6 +4,42 @@ All notable changes to Hookie are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-11-15
+
+A maintenance release: it moves the payload launch logic out of the native stubs
+into a single Python file (no user-facing API change) and hardens the
+thread-suspension path and the Windows test suite.
+
+### Changed
+
+- **Payload bootstrap extracted to `hookie/bootstrap.py`.** The sys.path setup and
+  payload import are now one readable, cross-platform Python file shipped into the
+  payload, instead of a C string duplicated across the four native stubs. One file
+  serves x86/x64 and Windows/Linux (it branches on `os.name` and reads the version
+  from `sys.version_info`). The stub reads it natively — so no `FILE*` crosses the
+  CRT boundary into libpython, a real hazard when the stub and the target
+  `python3XX.dll` were built by different compilers — compiles it with
+  `Py_CompileStringExFlags` under the filename `hookie_bootstrap.py` (clean
+  tracebacks), and runs it with `PyEval_EvalCode` in a **fresh** globals dict
+  holding only an injected `_hookie_dir`, so its temporaries no longer leak into
+  the target process's `__main__`.
+
+### Fixed
+
+- **GIL deadlock while suspending threads.** The suspend/context WinAPI calls now
+  run through a stdcall DLL that keeps the GIL held for the call
+  (`_FUNCFLAG_PYTHONAPI`). Previously the GIL was released during `SuspendThread`,
+  so the thread being suspended could grab the GIL, run Python, and be frozen
+  while holding it — deadlocking the suspender when it tried to reacquire. This
+  only surfaced under heavy contention (many threads calling the target while
+  hooks were installed/removed in a tight loop).
+- **Windows-only test corrections.** These tests never ran on the Linux
+  development machine, so three latent issues are fixed: `test_struct_layout` now
+  asserts `MEMORY_BASIC_INFORMATION` field offsets rather than a wrong total size;
+  `test_winapi` captures the pid before hooking, since on Windows `os.getpid()` is
+  itself `GetCurrentProcessId` and is intercepted once the hook is live; and the
+  native stub-build tests skip (instead of failing) when no C compiler is on PATH.
+
 ## [0.2.0] - 2026-11-14
 
 This release makes installing and removing hooks safe while other threads are
@@ -56,13 +92,6 @@ suite.
 
 ### Fixed
 
-- **GIL deadlock while suspending threads.** The suspend/context WinAPI calls now
-  run through a stdcall DLL that keeps the GIL held for the call
-  (`_FUNCFLAG_PYTHONAPI`). Previously the GIL was released during `SuspendThread`,
-  so the thread being suspended could grab the GIL, run Python, and be frozen
-  while holding it — deadlocking the suspender when it tried to reacquire. This
-  only surfaced under heavy contention (many threads calling the target while
-  hooks were installed/removed in a tight loop).
 - **x86 `MEMORY_BASIC_INFORMATION` layout.** `PartitionId` exists only in the
   64-bit layout; including it on 32-bit shifted every field by four bytes, so
   `VirtualQuery` misreported page state and protection and made valid target
@@ -84,5 +113,6 @@ Initial release: Python-native inline hooking with trampolines for x86/x64 on
 Windows and Linux, plus `create-dll` / `create-so` payload packaging and
 process injection.
 
+[0.2.1]: https://github.com/SemsYapar/hookie/releases/tag/v0.2.1
 [0.2.0]: https://github.com/SemsYapar/hookie/releases/tag/v0.2.0
 [0.1.0]: https://github.com/SemsYapar/hookie/releases/tag/v0.1.0

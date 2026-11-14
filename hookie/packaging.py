@@ -257,6 +257,19 @@ def copy_hookie(site: Path) -> None:
     (dst / "LICENSE").write_bytes(_license_bytes())
     print(f"  copied hookie -> {dst}")
 
+def place_bootstrap(out: Path) -> None:
+    """Copy the native stub's Python bootstrap next to hook.py in the payload.
+
+    The stub reads ``<payload>/bootstrap.py`` at load time, compiles it, and runs
+    it (in a fresh namespace) to set up ``sys.path`` and import ``hook.py``.
+    Shipping it as a file rather than a C string baked into the stub keeps the
+    launch logic in one readable, cross-platform place; ``--single-file`` archives
+    the whole payload tree, so it is embedded and extracted automatically.
+    """
+    src = Path(__file__).resolve().parent / "bootstrap.py"
+    shutil.copy2(src, out / "bootstrap.py")
+    print(f"  copied bootstrap -> {out / 'bootstrap.py'}")
+
 def place_scripts(source: Path, out: Path) -> Path:
     """Copy hook.py and sibling local modules/packages into the payload.
 
@@ -574,6 +587,7 @@ def create_dll(source: Path, out: Path, *, deps_root: Path, arch: str, py_versio
     copy_hookie(site)
     print("[5/7] payload entrypoint")
     place_scripts(source, payload)
+    place_bootstrap(payload)
     print("[6/7] stub DLL")
     place_stub(payload, arch, name, stub_src, prebuilt, debug=debug)
     stub = payload / name
@@ -814,6 +828,7 @@ def create_so(source: Path, out: Path, *, deps_root: Path, arch: str, py_version
     copy_hookie(site)
     print("[4/7] payload entrypoint")
     place_scripts(source, payload)
+    place_bootstrap(payload)
     print("[5/7] Linux runtime metadata")
     libpython_rel = libpython.relative_to(payload).as_posix()
     version = libpython.name[len("libpython"):].split(".so", 1)[0]

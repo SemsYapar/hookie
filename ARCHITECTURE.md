@@ -130,6 +130,7 @@ deps/
     ├── Python runtime
     ├── hookie/
     ├── dependencies
+    ├── bootstrap.py
     └── hook.py
 
 builds/
@@ -266,6 +267,23 @@ The archive extractor rejects absolute/traversal paths.
 
 ## 8. Python entrypoint execution
 
+The sys.path setup and payload import are performed by a single Python file,
+`hookie/bootstrap.py`, which packaging copies into the payload directory next to
+`hook.py` (single-file mode archives the whole tree, so it travels along). One
+file serves every target: it branches on `os.name` and reads the interpreter
+version from `sys.version_info`, so x86/x64 and Windows/Linux share it.
+
+The native stub launches it without any inline Python string: it reads
+`<payload>/bootstrap.py` with its own CRT (so no `FILE*` crosses into libpython —
+a real hazard when the stub and the target `python3XX.dll` were built by
+different compilers), compiles it with `Py_CompileStringExFlags` under the
+filename `hookie_bootstrap.py` (so tracebacks name it with correct line numbers),
+and runs it with `PyEval_EvalCode` in a **fresh** globals dict. The only value
+injected into that dict is `_hookie_dir`, set as a real `str` via
+`PyDict_SetItemString` (no Python-literal escaping). Using a fresh namespace
+instead of `__main__` means bootstrap's temporaries never leak into the target
+process.
+
 The user writes:
 
 ```text
@@ -376,10 +394,19 @@ The bootstrap releases the GIL and parks its worker for process lifetime.
 
 ## 12. Debug mode
 
-Windows `--debug` compiles `HK_DEBUG` traces using `OutputDebugStringW`, visible
-in a debugger or DebugView.
+`--debug` compiles the stub with `HK_DEBUG` trace statements. On Windows they are
+emitted with `OutputDebugStringW` (visible in a debugger or DebugView); on Linux
+to stderr.
 
-Linux `--debug` compiles `HK_DEBUG` traces to stderr.
+Every trace line is also timestamped and appended to a log file, so a failed
+bootstrap can be read after the fact. The path comes from the `HOOKIE_LOG`
+environment variable, or `<temp>/hookie.log` when it is unset. At startup each
+stub writes an architecture banner (`x64-windows`, `x86-linux`, …) so the log is
+unambiguous about which stub ran. Because `hookie.log_to_file()` — the Python-side
+install log — honours the same `HOOKIE_LOG` variable, pointing both at one file
+interleaves the native bootstrap steps with the Python hook-install decisions in
+order. The stub has no version of its own; hookie's version is recorded on the
+Python side.
 
 Debug builds are compiled from source instead of silently reusing release cache
 artifacts.

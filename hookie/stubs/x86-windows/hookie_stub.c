@@ -24,11 +24,22 @@
 typedef void           (*Py_InitializeEx_t)(int);
 typedef int            (*Py_IsInitialized_t)(void);
 typedef const char *   (*Py_GetVersion_t)(void);
-typedef int            (*PyRun_SimpleString_t)(const char *);
 typedef void           (*PyErr_Print_t)(void);
 typedef void *         (*PyEval_SaveThread_t)(void);
 typedef int            (*PyGILState_Ensure_t)(void);
 typedef void           (*PyGILState_Release_t)(int);
+/* Payload launch: compile bootstrap.py (read natively, so no FILE* crosses the
+ * CRT boundary into libpython) and run it in a fresh globals dict holding only
+ * the injected _hookie_dir. */
+typedef void *         (*PyDict_New_t)(void);
+typedef int            (*PyDict_SetItemString_t)(void *, const char *, void *);
+typedef void *         (*PyUnicode_FromWideChar_t)(const wchar_t *, intptr_t);
+typedef void *         (*PyEval_GetBuiltins_t)(void);
+typedef void *         (*Py_CompileStringExFlags_t)(const char *, const char *, int, void *, int);
+typedef void *         (*PyEval_EvalCode_t)(void *, void *, void *);
+typedef void           (*Py_DecRef_t)(void *);
+
+#define HK_Py_file_input 257   /* stable grammar start symbol for a module */
 
 static HMODULE g_self = NULL;
 static HMODULE g_py = NULL;
@@ -36,11 +47,17 @@ static HMODULE g_py = NULL;
 static Py_InitializeEx_t             pPy_InitializeEx;
 static Py_IsInitialized_t            pPy_IsInitialized;
 static Py_GetVersion_t               pPy_GetVersion;
-static PyRun_SimpleString_t          pPyRun_SimpleString;
 static PyErr_Print_t                 pPyErr_Print;
 static PyEval_SaveThread_t           pPyEval_SaveThread;
 static PyGILState_Ensure_t           pPyGILState_Ensure;
 static PyGILState_Release_t          pPyGILState_Release;
+static PyDict_New_t                  pPyDict_New;
+static PyDict_SetItemString_t        pPyDict_SetItemString;
+static PyUnicode_FromWideChar_t      pPyUnicode_FromWideChar;
+static PyEval_GetBuiltins_t          pPyEval_GetBuiltins;
+static Py_CompileStringExFlags_t     pPy_CompileStringExFlags;
+static PyEval_EvalCode_t             pPyEval_EvalCode;
+static Py_DecRef_t                   pPy_DecRef;
 
 #define HK_RESOURCE_MAGIC "HOOKIE_PAYLOAD_V1"
 #define HK_RESOURCE_PATH 1
@@ -249,82 +266,86 @@ static BOOL bind_common_python(void)
     pPy_InitializeEx       = (Py_InitializeEx_t)GetProcAddress(g_py, "Py_InitializeEx");
     pPy_IsInitialized      = (Py_IsInitialized_t)GetProcAddress(g_py, "Py_IsInitialized");
     pPy_GetVersion         = (Py_GetVersion_t)GetProcAddress(g_py, "Py_GetVersion");
-    pPyRun_SimpleString    = (PyRun_SimpleString_t)GetProcAddress(g_py, "PyRun_SimpleString");
     pPyErr_Print           = (PyErr_Print_t)GetProcAddress(g_py, "PyErr_Print");
     pPyEval_SaveThread     = (PyEval_SaveThread_t)GetProcAddress(g_py, "PyEval_SaveThread");
     pPyGILState_Ensure     = (PyGILState_Ensure_t)GetProcAddress(g_py, "PyGILState_Ensure");
     pPyGILState_Release    = (PyGILState_Release_t)GetProcAddress(g_py, "PyGILState_Release");
+    pPyDict_New            = (PyDict_New_t)GetProcAddress(g_py, "PyDict_New");
+    pPyDict_SetItemString  = (PyDict_SetItemString_t)GetProcAddress(g_py, "PyDict_SetItemString");
+    pPyUnicode_FromWideChar= (PyUnicode_FromWideChar_t)GetProcAddress(g_py, "PyUnicode_FromWideChar");
+    pPyEval_GetBuiltins    = (PyEval_GetBuiltins_t)GetProcAddress(g_py, "PyEval_GetBuiltins");
+    pPy_CompileStringExFlags = (Py_CompileStringExFlags_t)GetProcAddress(g_py, "Py_CompileStringExFlags");
+    pPyEval_EvalCode       = (PyEval_EvalCode_t)GetProcAddress(g_py, "PyEval_EvalCode");
+    pPy_DecRef             = (Py_DecRef_t)GetProcAddress(g_py, "Py_DecRef");
 
     return pPy_InitializeEx && pPy_IsInitialized && pPy_GetVersion &&
-           pPyRun_SimpleString && pPyErr_Print && pPyEval_SaveThread &&
-           pPyGILState_Ensure && pPyGILState_Release;
+           pPyErr_Print && pPyEval_SaveThread &&
+           pPyGILState_Ensure && pPyGILState_Release &&
+           pPyDict_New && pPyDict_SetItemString && pPyUnicode_FromWideChar &&
+           pPyEval_GetBuiltins && pPy_CompileStringExFlags && pPyEval_EvalCode &&
+           pPy_DecRef;
 }
 
 
-/* Convert payload dir to UTF-8 and escape it for a Python single-quoted literal. */
-static BOOL python_quote_dir(const wchar_t *dir, char *out, size_t cap)
+/* Read a whole file into a NUL-terminated, malloc'd buffer with the stub's own
+ * CRT. The FILE* never reaches libpython, so there is no cross-CRT hazard even
+ * when the stub and the target python3XX.dll were built by different compilers. */
+static char *read_whole_file_w(const wchar_t *path)
 {
-    char utf8[MAX_PATH * 4];
-    int n = WideCharToMultiByte(CP_UTF8, 0, dir, -1,
-                                utf8, (int)sizeof(utf8), NULL, NULL);
-    size_t i, j = 0;
-    if (!n) return FALSE;
-
-    for (i = 0; utf8[i]; ++i) {
-        unsigned char c = (unsigned char)utf8[i];
-        if (c == '\\' || c == '\'') {
-            if (j + 2 >= cap) return FALSE;
-            out[j++] = '\\';
-            out[j++] = (char)c;
-        } else {
-            if (j + 1 >= cap) return FALSE;
-            out[j++] = (char)c;
-        }
+    FILE *f = _wfopen(path, L"rb");
+    long sz;
+    char *buf;
+    size_t n;
+    if (!f) return NULL;
+    if (fseek(f, 0, SEEK_END) != 0 || (sz = ftell(f)) < 0 || fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f); return NULL;
     }
-    if (j >= cap) return FALSE;
-    out[j] = 0;
-    return TRUE;
+    buf = (char *)malloc((size_t)sz + 1);
+    if (!buf) { fclose(f); return NULL; }
+    n = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+    if (n != (size_t)sz) { free(buf); return NULL; }
+    buf[sz] = 0;
+    return buf;
 }
 
+/* Compile bootstrap.py (named for clean tracebacks) and run it in a fresh
+ * globals dict holding only _hookie_dir, so none of its temporaries leak into
+ * the target's __main__. The directory is passed as a real str object, so no
+ * Python string-literal escaping is needed. */
 static int execute_payload(const wchar_t *dir)
 {
-    char qdir[MAX_PATH * 8];
-    char code[MAX_PATH * 20 + 4096];
+    wchar_t path[MAX_PATH * 2];
+    char *src;
+    void *globals = NULL, *builtins, *pdir = NULL, *code = NULL, *res = NULL;
+    int rc = -1;
 
-    if (!python_quote_dir(dir, qdir, sizeof(qdir))) return -1;
+    _snwprintf(path, MAX_PATH * 2, L"%s\\bootstrap.py", dir);
+    path[MAX_PATH * 2 - 1] = 0;
+    src = read_whole_file_w(path);
+    if (!src) { HK_TRACE(L"execute_payload: cannot read bootstrap.py"); return -1; }
 
-    _snprintf(code, sizeof(code),
-        "import sys, os, importlib.util\n"
-        "_hookie_dir = '%s'\n"
-        "_hookie_id = os.path.basename(os.path.normpath(_hookie_dir))\n"
-        "_hookie_site = os.path.join(_hookie_dir, 'Lib', 'site-packages')\n"
-        "if _hookie_site not in sys.path: sys.path.insert(0, _hookie_site)\n"
-        "if _hookie_dir not in sys.path: sys.path.insert(0, _hookie_dir)\n"
-        "# Keep the returned handle alive: closing/GC'ing it removes this DLL search path.\n"
-        "if hasattr(os, 'add_dll_directory'):\n"
-        "    if not hasattr(sys, '_hookie_dll_dirs'): sys._hookie_dll_dirs = []\n"
-        "    sys._hookie_dll_dirs.append(os.add_dll_directory(_hookie_dir))\n"
-        "_hookie_name = 'hookie_' + _hookie_id\n"
-        "_hookie_file = os.path.join(_hookie_dir, 'hook.py')\n"
-        "_hookie_mod = sys.modules.get(_hookie_name)\n"
-        "if _hookie_mod is None:\n"
-        "    _hookie_spec = importlib.util.spec_from_file_location(_hookie_name, _hookie_file)\n"
-        "    if _hookie_spec is None or _hookie_spec.loader is None: raise ImportError('cannot load hookie payload')\n"
-        "    _hookie_mod = importlib.util.module_from_spec(_hookie_spec)\n"
-        "    _hookie_mod.__hookie_loaded__ = False\n"
-        "    sys.modules[_hookie_name] = _hookie_mod\n"
-        "    _hookie_spec.loader.exec_module(_hookie_mod)\n"
-        "    _hookie_mod.__hookie_loaded__ = True\n"
-        "elif not getattr(_hookie_mod, '__hookie_loaded__', False):\n"
-        "    raise RuntimeError('previous hookie payload execution failed; refusing to execute it twice')\n",
-        qdir);
-    code[sizeof(code) - 1] = 0;
+    globals = pPyDict_New();
+    if (!globals) goto done;
+    builtins = pPyEval_GetBuiltins();                 /* borrowed */
+    if (builtins) pPyDict_SetItemString(globals, "__builtins__", builtins);
+    pdir = pPyUnicode_FromWideChar(dir, -1);          /* new ref */
+    if (!pdir || pPyDict_SetItemString(globals, "_hookie_dir", pdir) != 0) goto done;
 
-    {
-        int rc = pPyRun_SimpleString(code);
-        if (rc != 0) pPyErr_Print();
-        return rc;
-    }
+    code = pPy_CompileStringExFlags(src, "hookie_bootstrap.py", HK_Py_file_input, NULL, -1);
+    if (!code) goto done;
+
+    res = pPyEval_EvalCode(code, globals, globals);
+    rc = res ? 0 : -1;
+
+done:
+    if (rc != 0) pPyErr_Print();
+    if (res) pPy_DecRef(res);
+    if (code) pPy_DecRef(code);
+    if (pdir) pPy_DecRef(pdir);
+    if (globals) pPy_DecRef(globals);
+    free(src);
+    return rc;
 }
 
 static DWORD run_existing_runtime(HMODULE existing, const wchar_t *dir)

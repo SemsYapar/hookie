@@ -86,6 +86,11 @@ def main() -> None:
             f"Path({str(marker)!r}).write_text(__name__, encoding='utf-8')\n",
             encoding="utf-8",
         )
+        # The stub reads and runs bootstrap.py from the payload dir.
+        (payload / "bootstrap.py").write_text(
+            (HOOKIE_PACKAGE_DIR / "bootstrap.py").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
 
         src = HOOKIE_PACKAGE_DIR / "stubs" / f"{ARCH}-windows" / "hookie_stub.c"
         stub = base / "hookie_stub.dll"

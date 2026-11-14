@@ -29,11 +29,21 @@ typedef void           (*Py_InitializeEx_t)(int);
 typedef int            (*Py_IsInitialized_t)(void);
 typedef const char *   (*Py_GetVersion_t)(void);
 typedef void           (*Py_SetPythonHome_t)(const wchar_t *);
-typedef int            (*PyRun_SimpleString_t)(const char *);
 typedef void           (*PyErr_Print_t)(void);
 typedef void *         (*PyEval_SaveThread_t)(void);
 typedef int            (*PyGILState_Ensure_t)(void);
 typedef void           (*PyGILState_Release_t)(int);
+/* Payload launch: compile bootstrap.py (read natively, so no FILE* crosses the
+ * CRT boundary) and run it in a fresh globals dict with _hookie_dir injected. */
+typedef void *         (*PyDict_New_t)(void);
+typedef int            (*PyDict_SetItemString_t)(void *, const char *, void *);
+typedef void *         (*PyUnicode_DecodeFSDefault_t)(const char *);
+typedef void *         (*PyEval_GetBuiltins_t)(void);
+typedef void *         (*Py_CompileStringExFlags_t)(const char *, const char *, int, void *, int);
+typedef void *         (*PyEval_EvalCode_t)(void *, void *, void *);
+typedef void           (*Py_DecRef_t)(void *);
+
+#define HK_Py_file_input 257   /* stable grammar start symbol for a module */
 
 static void *g_py;
 static wchar_t g_python_home[PATH_MAX];
@@ -42,11 +52,17 @@ static Py_InitializeEx_t             pPy_InitializeEx;
 static Py_IsInitialized_t            pPy_IsInitialized;
 static Py_GetVersion_t               pPy_GetVersion;
 static Py_SetPythonHome_t            pPy_SetPythonHome;
-static PyRun_SimpleString_t          pPyRun_SimpleString;
 static PyErr_Print_t                  pPyErr_Print;
 static PyEval_SaveThread_t           pPyEval_SaveThread;
 static PyGILState_Ensure_t           pPyGILState_Ensure;
 static PyGILState_Release_t          pPyGILState_Release;
+static PyDict_New_t                  pPyDict_New;
+static PyDict_SetItemString_t        pPyDict_SetItemString;
+static PyUnicode_DecodeFSDefault_t   pPyUnicode_DecodeFSDefault;
+static PyEval_GetBuiltins_t          pPyEval_GetBuiltins;
+static Py_CompileStringExFlags_t     pPy_CompileStringExFlags;
+static PyEval_EvalCode_t             pPyEval_EvalCode;
+static Py_DecRef_t                   pPy_DecRef;
 
 static void *sym(const char *name)
 {
@@ -331,75 +347,94 @@ static int bind_common_python(void)
     pPy_InitializeEx = (Py_InitializeEx_t)sym("Py_InitializeEx");
     pPy_IsInitialized = (Py_IsInitialized_t)sym("Py_IsInitialized");
     pPy_GetVersion = (Py_GetVersion_t)sym("Py_GetVersion");
-    pPyRun_SimpleString = (PyRun_SimpleString_t)sym("PyRun_SimpleString");
     pPyErr_Print = (PyErr_Print_t)sym("PyErr_Print");
     pPyEval_SaveThread = (PyEval_SaveThread_t)sym("PyEval_SaveThread");
     pPyGILState_Ensure = (PyGILState_Ensure_t)sym("PyGILState_Ensure");
     pPyGILState_Release = (PyGILState_Release_t)sym("PyGILState_Release");
+    pPyDict_New = (PyDict_New_t)sym("PyDict_New");
+    pPyDict_SetItemString = (PyDict_SetItemString_t)sym("PyDict_SetItemString");
+    pPyUnicode_DecodeFSDefault = (PyUnicode_DecodeFSDefault_t)sym("PyUnicode_DecodeFSDefault");
+    pPyEval_GetBuiltins = (PyEval_GetBuiltins_t)sym("PyEval_GetBuiltins");
+    pPy_CompileStringExFlags = (Py_CompileStringExFlags_t)sym("Py_CompileStringExFlags");
+    pPyEval_EvalCode = (PyEval_EvalCode_t)sym("PyEval_EvalCode");
+    pPy_DecRef = (Py_DecRef_t)sym("Py_DecRef");
     return pPy_InitializeEx && pPy_IsInitialized && pPy_GetVersion &&
-           pPyRun_SimpleString && pPyErr_Print && pPyEval_SaveThread &&
-           pPyGILState_Ensure && pPyGILState_Release;
+           pPyErr_Print && pPyEval_SaveThread &&
+           pPyGILState_Ensure && pPyGILState_Release &&
+           pPyDict_New && pPyDict_SetItemString && pPyUnicode_DecodeFSDefault &&
+           pPyEval_GetBuiltins && pPy_CompileStringExFlags && pPyEval_EvalCode &&
+           pPy_DecRef;
 }
 
 
-static int python_quote(const char *src, char *out, size_t cap)
+/* Read a whole file into a NUL-terminated, malloc'd buffer with the stub's own
+ * CRT. The FILE* never reaches libpython, so there is no cross-CRT hazard. */
+static char *read_whole_file(const char *path)
 {
-    size_t i, j = 0;
-    for (i = 0; src[i]; ++i) {
-        unsigned char c = (unsigned char)src[i];
-        if (c == '\\' || c == '\'') {
-            if (j + 2 >= cap) return 0;
-            out[j++] = '\\';
-            out[j++] = (char)c;
-        } else {
-            if (j + 1 >= cap) return 0;
-            out[j++] = (char)c;
-        }
+    FILE *f = fopen(path, "rb");
+    long sz;
+    char *buf;
+    size_t n;
+    if (!f) return NULL;
+    if (fseek(f, 0, SEEK_END) != 0 || (sz = ftell(f)) < 0 || fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f); return NULL;
     }
-    if (j >= cap) return 0;
-    out[j] = '\0';
-    return 1;
+    buf = (char *)malloc((size_t)sz + 1);
+    if (!buf) { fclose(f); return NULL; }
+    n = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+    if (n != (size_t)sz) { free(buf); return NULL; }
+    buf[sz] = '\0';
+    return buf;
 }
 
-static int execute_payload(const char *dir, const char *version)
+/* Compile bootstrap.py (named for clean tracebacks) and run it in a fresh
+ * globals dict holding only _hookie_dir, so none of its temporaries leak into
+ * the target's __main__. The directory is passed as a real object, so no Python
+ * string-literal escaping is needed. */
+static int execute_payload(const char *dir)
 {
-    char qdir[PATH_MAX * 2];
-    char code[PATH_MAX * 6 + 4096];
+    char path[PATH_MAX];
+    char *src;
+    void *globals = NULL, *builtins, *pdir = NULL, *code = NULL, *res = NULL;
+    int rc = -1;
 
-    if (!python_quote(dir, qdir, sizeof(qdir))) return -1;
-    if (snprintf(code, sizeof(code),
-        "import sys, os, importlib.util\n"
-        "_hookie_dir = '%s'\n"
-        "_hookie_id = os.path.basename(os.path.normpath(_hookie_dir))\n"
-        "_hookie_site = os.path.join(_hookie_dir, 'lib', 'python%s', 'site-packages')\n"
-        "if _hookie_site not in sys.path: sys.path.insert(0, _hookie_site)\n"
-        "if _hookie_dir not in sys.path: sys.path.insert(0, _hookie_dir)\n"
-        "_hookie_name = 'hookie_' + _hookie_id\n"
-        "_hookie_file = os.path.join(_hookie_dir, 'hook.py')\n"
-        "_hookie_mod = sys.modules.get(_hookie_name)\n"
-        "if _hookie_mod is None:\n"
-        "    _hookie_spec = importlib.util.spec_from_file_location(_hookie_name, _hookie_file)\n"
-        "    if _hookie_spec is None or _hookie_spec.loader is None: raise ImportError('cannot load hookie payload')\n"
-        "    _hookie_mod = importlib.util.module_from_spec(_hookie_spec)\n"
-        "    _hookie_mod.__hookie_loaded__ = False\n"
-        "    sys.modules[_hookie_name] = _hookie_mod\n"
-        "    _hookie_spec.loader.exec_module(_hookie_mod)\n"
-        "    _hookie_mod.__hookie_loaded__ = True\n"
-        "elif not getattr(_hookie_mod, '__hookie_loaded__', False):\n"
-        "    raise RuntimeError('previous hookie payload execution failed; refusing to execute it twice')\n",
-        qdir, version) >= (int)sizeof(code)) return -1;
-
-    {
-        int rc = pPyRun_SimpleString(code);
-        if (rc != 0) pPyErr_Print();
-        return rc;
+    if (snprintf(path, sizeof(path), "%s/bootstrap.py", dir) >= (int)sizeof(path))
+        return -1;
+    src = read_whole_file(path);
+    if (!src) {
+        HK_TRACEF("execute_payload: cannot read %s", path);
+        return -1;
     }
+
+    globals = pPyDict_New();
+    if (!globals) goto done;
+    builtins = pPyEval_GetBuiltins();                 /* borrowed */
+    if (builtins) pPyDict_SetItemString(globals, "__builtins__", builtins);
+    pdir = pPyUnicode_DecodeFSDefault(dir);           /* new ref */
+    if (!pdir || pPyDict_SetItemString(globals, "_hookie_dir", pdir) != 0) goto done;
+
+    code = pPy_CompileStringExFlags(src, "hookie_bootstrap.py", HK_Py_file_input, NULL, -1);
+    if (!code) goto done;
+
+    res = pPyEval_EvalCode(code, globals, globals);
+    rc = res ? 0 : -1;
+
+done:
+    if (rc != 0) pPyErr_Print();
+    if (res) pPy_DecRef(res);
+    if (code) pPy_DecRef(code);
+    if (pdir) pPy_DecRef(pdir);
+    if (globals) pPy_DecRef(globals);
+    free(src);
+    return rc;
 }
 
 static void *run_existing_runtime(void *handle, const char *dir, const char *version)
 {
     int gil;
     int rc;
+    (void)version; /* bootstrap.py derives the version from sys.version_info */
     g_py = handle; /* NULL means RTLD_DEFAULT. */
     if (!bind_common_python()) {
         fprintf(stderr, "hookie: existing CPython lacks required API\n");
@@ -412,7 +447,7 @@ static void *run_existing_runtime(void *handle, const char *dir, const char *ver
 
     HK_TRACEF("run_existing: reusing CPython %s main interpreter", pPy_GetVersion());
     gil = pPyGILState_Ensure();
-    rc = execute_payload(dir, version);
+    rc = execute_payload(dir);
     pPyGILState_Release(gil);
     if (rc != 0)
         fprintf(stderr, "hookie: payload execution failed in existing interpreter\n");
@@ -443,6 +478,7 @@ static int set_bundled_home(const char *dir)
 static void *run_bundled_runtime(const char *dir, const char *pydll,
                                  const char *version)
 {
+    (void)version; /* bootstrap.py derives the version from sys.version_info */
     HK_TRACEF("run_bundled: dlopen(%s)", pydll);
     g_py = dlopen(pydll, RTLD_NOW | RTLD_GLOBAL);
     if (!g_py) {
@@ -472,7 +508,7 @@ static void *run_bundled_runtime(const char *dir, const char *pydll,
     }
 
     HK_TRACE("run_bundled: execute payload entrypoint");
-    if (execute_payload(dir, version) != 0)
+    if (execute_payload(dir) != 0)
         fprintf(stderr, "hookie: payload execution failed; keeping runtime alive\n");
     else
         HK_TRACE("run_bundled: payload OK; parking interpreter");

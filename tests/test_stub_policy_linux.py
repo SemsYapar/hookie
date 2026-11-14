@@ -87,6 +87,7 @@ def main() -> None:
             f"Path({str(same_marker)!r}).write_text(__name__, encoding='utf-8')\n",
             encoding="utf-8",
         )
+        shutil.copy2(HOOKIE_PACKAGE_DIR / "bootstrap.py", same_payload / "bootstrap.py")
         same_stub = base / "same.so"
         shutil.copy2(compiled, same_stub)
         _load_with_payload(same_stub, same_payload)
@@ -107,6 +108,7 @@ def main() -> None:
             f"Path({str(single_marker)!r}).write_text(__name__ + '|' + __file__, encoding='utf-8')\n",
             encoding="utf-8",
         )
+        shutil.copy2(HOOKIE_PACKAGE_DIR / "bootstrap.py", single_payload / "bootstrap.py")
         single_stub = base / "single.so"
         shutil.copy2(compiled, single_stub)
         extracted = Path("/tmp") / single_payload.name
@@ -131,6 +133,7 @@ def main() -> None:
             f"Path({str(different_marker)!r}).write_text('BAD', encoding='utf-8')\n",
             encoding="utf-8",
         )
+        shutil.copy2(HOOKIE_PACKAGE_DIR / "bootstrap.py", different_payload / "bootstrap.py")
         different_stub = base / "different.so"
         shutil.copy2(compiled, different_stub)
         _load_with_payload(different_stub, different_payload)
