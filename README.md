@@ -92,6 +92,7 @@ See `examples/` for examples. See `ARCHITECTURE.md` for the trampoline, payload,
 - Installing/removing inline hooks is thread-safe on Windows (x64/x86): other threads are suspended and, if needed, relocated onto the trampoline while the prologue is patched. On Linux, the entry race is handled by an atomic patch write, but a thread already executing inside the prologue is not covered yet, so install hooks at a quiet point (e.g. at startup). See `ARCHITECTURE.md` for details.
 - In an existing Python process, Windows reuses the same CPython minor version and can use Hookie's bundled runtime when a different minor is present.
 - On Linux, Hookie reuses the same CPython major/minor. If a different `libpython` is already mapped, Hookie refuses to load a second Python runtime.
-- x86 native testing/building requires a real 32-bit Python/process and a 32-bit toolchain.
 
-MIT licensed.
+Both x86 and x64 are fully supported; a 32-bit process simply needs a 32-bit
+Python, and the native stubs ship prebuilt (a C toolchain is only needed to
+rebuild a stub from source). MIT licensed.
