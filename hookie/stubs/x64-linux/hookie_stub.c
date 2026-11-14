@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <errno.h>
 #include <sys/stat.h>
@@ -58,10 +59,46 @@ static void *sym(const char *name)
 #define HK_MAX_IDENT 64            /* sanity cap on the payload id length */
 #define HK_MAX_RAW (1ull << 31)    /* 2 GiB cap on decompressed payload size */
 
+/* === THIS IS THE x64-linux STUB ===
+ * Place this file at hookie/stubs/x64-linux/hookie_stub.c.
+ * HK_STUB_ID names the arch in debug log lines (hookie's version is logged
+ * separately on the Python side). */
+#define HK_STUB_ID "x64-linux"
+
 #ifdef HK_DEBUG
-#define HK_TRACE(msg) do { fprintf(stderr, "[hookie] %s\n", (msg)); fflush(stderr); } while (0)
-#define HK_TRACEF(...) do { fprintf(stderr, "[hookie] "); fprintf(stderr, __VA_ARGS__); \
-                            fputc('\n', stderr); fflush(stderr); } while (0)
+/* Traces are timestamped, sent to stderr, and appended to a log file, so they
+ * can be read after the fact alongside hookie's own install log: set $HOOKIE_LOG
+ * to pick the path, otherwise $TMPDIR/hookie.log (or /tmp/hookie.log) is used. */
+static void hk_trace_line(const char *line)
+{
+    char ts[32], stamped[4160];
+    time_t t = time(NULL);
+    struct tm tmv;
+    localtime_r(&t, &tmv);
+    strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &tmv);
+    snprintf(stamped, sizeof(stamped), "%s %s", ts, line);
+
+    fputs(stamped, stderr);
+    fflush(stderr);
+    {
+        const char *path = getenv("HOOKIE_LOG");
+        char buf[4096];
+        FILE *f;
+        if (!path || !*path) {
+            const char *tmp = getenv("TMPDIR");
+            snprintf(buf, sizeof(buf), "%s/hookie.log", (tmp && *tmp) ? tmp : "/tmp");
+            path = buf;
+        }
+        f = fopen(path, "a");
+        if (f) { fputs(stamped, f); fclose(f); }
+    }
+}
+#define HK_TRACE(msg) hk_trace_line("[hookie] " msg "\n")
+#define HK_TRACEF(...) do { char _b[1024]; int _n = snprintf(_b, sizeof(_b), "[hookie] "); \
+                            if (_n < 0 || _n >= (int)sizeof(_b)) _n = 0; \
+                            snprintf(_b + _n, sizeof(_b) - _n, __VA_ARGS__); \
+                            { size_t _l = strlen(_b); if (_l + 2 <= sizeof(_b)) { _b[_l]='\n'; _b[_l+1]=0; } } \
+                            hk_trace_line(_b); } while (0)
 #else
 #define HK_TRACE(msg) ((void)0)
 #define HK_TRACEF(...) ((void)0)
@@ -450,6 +487,7 @@ static void *worker(void *unused)
     char pydll[PATH_MAX];
     char version[32];
     (void)unused;
+    HK_TRACE("stub " HK_STUB_ID " begin");
     HK_TRACE("worker: begin");
 
     if (!resolve_payload_dir(dir, sizeof(dir))) {

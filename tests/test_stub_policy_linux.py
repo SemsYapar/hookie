@@ -17,10 +17,10 @@ from pathlib import Path
 
 
 def _load_packaging():
-    # tests/linux/test_stub_runtime_policy.py -> repo root is parents[2].
+    # tests/test_stub_policy_linux.py -> repo root is parents[1].
     # Load packaging.py directly so the policy test stays independent of
     # hookie.core/Capstone.
-    package_dir = Path(__file__).resolve().parents[2] / "hookie"
+    package_dir = Path(__file__).resolve().parents[1] / "hookie"
     path = package_dir / "packaging.py"
     module_spec = importlib.util.spec_from_file_location(
         "hookie_packaging_stub_policy_test", path
@@ -141,4 +141,17 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    main()
+
+
+import pytest  # noqa: E402
+from helpers import IS_LINUX  # noqa: E402
+
+
+@pytest.mark.skipif(not IS_LINUX, reason="Linux native stub bootstrap")
+def test_stub_runtime_policy_linux():
+    # Compiles the native stub, so it needs gcc — an optional external tool, not
+    # part of the library. Skip (don't fail) when it is absent.
+    if not shutil.which("gcc"):
+        pytest.skip("gcc not on PATH")
     main()

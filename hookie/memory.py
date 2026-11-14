@@ -37,17 +37,27 @@ if IS_WINDOWS:
             ("wProcessorRevision", ctypes.c_ushort),
         ]
 
+    # PartitionId exists only in the _WIN64 layout of MEMORY_BASIC_INFORMATION
+    # (see winnt.h). On x64 it is absorbed by alignment padding so RegionSize
+    # stays put; on x86 it must be omitted entirely, otherwise RegionSize/State/
+    # Protect shift by 4 bytes and readable_extent misreads State. (That shift
+    # was a real x86 bug: VirtualQuery returns a 28-byte record there, not 32.)
+    _mbi_fields = [
+        ("BaseAddress", ctypes.c_void_p),
+        ("AllocationBase", ctypes.c_void_p),
+        ("AllocationProtect", ctypes.c_ulong),
+    ]
+    if ctypes.sizeof(ctypes.c_void_p) == 8:
+        _mbi_fields.append(("PartitionId", ctypes.c_ushort))
+    _mbi_fields += [
+        ("RegionSize", ctypes.c_size_t),
+        ("State", ctypes.c_ulong),
+        ("Protect", ctypes.c_ulong),
+        ("Type", ctypes.c_ulong),
+    ]
+
     class MEMORY_BASIC_INFORMATION(ctypes.Structure):
-        _fields_ = [
-            ("BaseAddress", ctypes.c_void_p),
-            ("AllocationBase", ctypes.c_void_p),
-            ("AllocationProtect", ctypes.c_ulong),
-            ("PartitionId", ctypes.c_ushort),
-            ("RegionSize", ctypes.c_size_t),
-            ("State", ctypes.c_ulong),
-            ("Protect", ctypes.c_ulong),
-            ("Type", ctypes.c_ulong),
-        ]
+        _fields_ = _mbi_fields
 
     kernel32.VirtualProtect.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong)]
     kernel32.VirtualProtect.restype = ctypes.c_int
@@ -312,6 +322,21 @@ class MemoryManager:
                 raise OSError(ctypes.get_last_error(), "VirtualFree failed")
         elif libc.munmap(address, size) != 0:
             e = ctypes.get_errno(); raise OSError(e, os.strerror(e))
+
+    @staticmethod
+    def write_qword_atomic(aligned_addr: int, value: int) -> None:
+        """Single naturally-aligned 8-byte store (indivisible on x86/x64).
+
+        Another core observing the location sees either the complete old qword
+        or the complete new one, never a half-written mix. This closes Scenario
+        A without suspending threads: a thread entering the function at the first
+        byte can never see a partial patch. The caller MUST pass an 8-aligned
+        address (a misaligned store can split a cache line and lose atomicity)
+        and ensure the page is writable.
+        """
+        if aligned_addr & 7:
+            raise ValueError("atomic store requires an 8-byte aligned address")
+        ctypes.c_uint64.from_address(aligned_addr).value = value & 0xFFFFFFFFFFFFFFFF
 
     @staticmethod
     def flush_instruction_cache(address: int, size: int) -> None:

@@ -21,7 +21,7 @@ def _load_packaging():
     # This test lives at tests/windows/test_stub_runtime_policy.py.
     # We intentionally load packaging.py directly so the runtime-policy test
     # does not pull in hookie.core/Capstone just to compile and decorate a stub.
-    package_dir = Path(__file__).resolve().parents[2] / "hookie"
+    package_dir = Path(__file__).resolve().parents[1] / "hookie"
     path = package_dir / "packaging.py"
     module_spec = importlib.util.spec_from_file_location(
         "hookie_packaging_win_stub_policy_test", path
@@ -110,4 +110,28 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    main()
+
+
+import shutil  # noqa: E402
+
+import pytest  # noqa: E402
+from helpers import IS_WINDOWS  # noqa: E402
+
+
+def _have_windows_compiler() -> bool:
+    """True if a C toolchain that can build the stub is on PATH. Mirrors the
+    selection in packaging._compile_windows_stub (MSVC cl, else arch MinGW gcc)."""
+    if shutil.which("cl"):
+        return True
+    return shutil.which(f"{packaging._ARCH[ARCH][2]}-gcc") is not None
+
+
+@pytest.mark.skipif(not IS_WINDOWS, reason="Windows native stub bootstrap")
+def test_stub_runtime_policy_windows():
+    # This test actually compiles the native stub, so it needs a C compiler.
+    # That is an optional external dependency, not part of the library — when it
+    # is absent the test skips rather than failing.
+    if not _have_windows_compiler():
+        pytest.skip("no Windows C compiler (MSVC cl or MinGW-w64) on PATH")
     main()

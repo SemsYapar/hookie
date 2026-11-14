@@ -221,6 +221,13 @@ class TrampolineBuilder:
                 "trampoline_addr": trampoline_addr,
                 "trampoline_size": trampoline_size,
                 "code_size": len(code),
+                # Maps each stolen instruction's original address to the address
+                # of its relocated copy in the trampoline. Used to retarget a
+                # suspended thread whose RIP — or whose stack return address —
+                # points into the stolen region, so it resumes on the trampoline
+                # copy instead of the overwritten prologue (Scenario B).
+                "addr_map": dict(addr_map),
+                "stolen_has_call": any(self._kind(p["ins"]) == "call" for p in plan),
             }
         except Exception:
             MemoryManager.free_rwx(trampoline_addr, trampoline_size)

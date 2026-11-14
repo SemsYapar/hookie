@@ -49,11 +49,63 @@ static PyGILState_Release_t          pPyGILState_Release;
 #define HK_MAX_RAW (1ull << 31)    /* 2 GiB cap on decompressed payload size */
 
 /* Injected DLLs usually have no console, so printf/stderr are invisible.
- * Build with -DHK_DEBUG and watch DebugView to trace where the worker stops. */
+ * Build with -DHK_DEBUG to trace where the worker stops. Traces go to DebugView
+ * (OutputDebugString) and are also appended to a log file, so they can be read
+ * after the fact alongside hookie's own install log: set %HOOKIE_LOG% to pick
+ * the path, otherwise <temp>\hookie.log is used. */
+/* === THIS IS THE x86-windows STUB ===
+ * Place this file at hookie/stubs/x86-windows/hookie_stub.c.
+ * HK_STUB_ID names the arch in debug log lines (hookie's version is logged
+ * separately on the Python side). */
+#define HK_STUB_ID L"x86-windows"
+
 #ifdef HK_DEBUG
-#define HK_TRACE(msg)   OutputDebugStringW(L"[hookie] " msg L"\n")
-#define HK_TRACEW(wstr) do { OutputDebugStringW(L"[hookie] "); \
-                             OutputDebugStringW(wstr); OutputDebugStringW(L"\n"); } while (0)
+static void hk_trace_write(const wchar_t *line)
+{
+    wchar_t path[MAX_PATH * 2];
+    wchar_t stamped[1152];
+    SYSTEMTIME st;
+    DWORD n;
+    HANDLE h;
+
+    GetLocalTime(&st);
+    _snwprintf(stamped, 1152, L"%04u-%02u-%02u %02u:%02u:%02u %s",
+               st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, line);
+    stamped[1151] = 0;
+    line = stamped;
+
+    OutputDebugStringW(line);
+
+    n = GetEnvironmentVariableW(L"HOOKIE_LOG", path, MAX_PATH * 2);
+    if (n == 0 || n >= MAX_PATH * 2) {
+        wchar_t tmp[MAX_PATH];
+        DWORD t = GetTempPathW(MAX_PATH, tmp);
+        if (t == 0 || t >= MAX_PATH) return;
+        _snwprintf(path, MAX_PATH * 2, L"%shookie.log", tmp);
+        path[MAX_PATH * 2 - 1] = 0;
+    }
+    h = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h != INVALID_HANDLE_VALUE) {
+        char utf8[1024];
+        int len = WideCharToMultiByte(CP_UTF8, 0, line, -1, utf8,
+                                      (int)sizeof(utf8), NULL, NULL);
+        if (len > 1) {
+            DWORD wrote;
+            WriteFile(h, utf8, (DWORD)(len - 1), &wrote, NULL);
+        }
+        CloseHandle(h);
+    }
+}
+static void hk_tracew_write(const wchar_t *body)
+{
+    wchar_t buf[1024];
+    _snwprintf(buf, 1024, L"[hookie] %s\n", body);
+    buf[1023] = 0;
+    hk_trace_write(buf);
+}
+#define HK_TRACE(msg)   hk_trace_write(L"[hookie] " msg L"\n")
+#define HK_TRACEW(wstr) hk_tracew_write(wstr)
 #else
 #define HK_TRACE(msg)   ((void)0)
 #define HK_TRACEW(wstr) ((void)0)
@@ -339,6 +391,7 @@ static DWORD WINAPI worker(LPVOID param)
     HMODULE existing;
     (void)param;
 
+    HK_TRACE(L"stub " HK_STUB_ID L" begin");
     HK_TRACE(L"worker: begin");
     if (!resolve_payload_dir(dir, MAX_PATH)) { HK_TRACE(L"worker: resolve FAILED"); return 1; }
     HK_TRACE(L"worker: resolve OK, dir ->"); HK_TRACEW(dir);

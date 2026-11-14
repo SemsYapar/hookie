@@ -38,11 +38,17 @@ The hook starts disabled. `enable()` writes the jump into the target prologue.
 
 ### x64 patch choices
 
-Hookie chooses among:
+Hookie prefers the 5-byte `rel32` jump and falls back in order:
 
-- a 14-byte absolute indirect jump,
-- a 5-byte `rel32` jump when the destination is in range,
-- a 5-byte jump to a nearby relay which then performs the absolute jump.
+- a 5-byte `rel32` jump when the detour is in range,
+- a 5-byte jump to a nearby relay that performs the absolute jump, when the
+  detour is out of range,
+- a 14-byte absolute indirect jump, only when neither of the above is possible.
+
+The `rel32` form is preferred because it fits one naturally-aligned 8-byte
+window and can therefore be written atomically (see *Thread safety*), and
+because it steals fewer prologue bytes. The 14-byte absolute jump cannot be
+written atomically, so it is a last resort.
 
 ### Relocation
 
@@ -65,8 +71,43 @@ Executable buffers are allocated writable, populated, then changed to executable
 permissions. Hookie also supports near/range-constrained allocation where x64
 RIP-relative relocation or a `rel32` relay requires it.
 
-Hook installation/removal is not thread-safe: another thread executing the
-prologue while its bytes are being replaced can observe a partial patch.
+---
+
+## 3a. Thread safety
+
+Installing or removing a hook overwrites a function's prologue. If another thread
+touches that prologue during the write, two distinct failures are possible:
+
+- **Entry race.** A thread calls the function and reads the first bytes while
+  they are half-written — it executes a mix of old and new bytes and jumps to
+  garbage.
+- **In-progress race.** A thread is already *inside* the stolen region (its
+  instruction pointer is mid-prologue), or its stack holds a return address that
+  points into the stolen region (possible only when the stolen bytes contain a
+  `call`). When the prologue changes underneath it, it resumes on bytes that are
+  no longer the instruction it expected.
+
+Hookie addresses these as follows:
+
+- **Windows (x64 and x86).** `enable()`/`disable()` run under thread suspension:
+  every other thread is suspended, and any thread whose instruction pointer — or,
+  when the stolen region contains a `call`, whose stack return address — points
+  into the stolen region is relocated onto the trampoline copy of those
+  instructions. The patch is then written and the threads resumed. This closes
+  both races. See `hookie/threads.py`.
+
+  `enable_all()`/`disable_all()` apply the whole group under a **single**
+  suspend/resume (`modify_threads_batch`), rather than one cycle per hook. Doing
+  the group at once is faster and strictly safer: because threads never run free
+  between two prologue writes, a half-installed set of hooks cannot be observed.
+- **Linux.** There is no safe in-process thread-suspend primitive (`SIGSTOP` is
+  process-wide and asynchronous), so suspension is not yet implemented. The entry
+  race is still closed by writing the `rel32` patch as a single naturally-aligned
+  8-byte store, which x86/x64 guarantee is atomic — a thread sees either the
+  whole old prologue or the whole new jump, never a mix. The in-progress race is
+  **not** covered on Linux, so hooks should be installed at a quiescent moment
+  (typically at startup, before worker threads call the target). A signal-based
+  quiesce is the planned Linux backend.
 
 ---
 
@@ -347,14 +388,23 @@ artifacts.
 
 ## 13. Tests
 
-`examples/` contains user-facing hook payloads.
+`examples/` contains user-facing hook payloads. `tests/` is a pytest suite; run
+it with `pytest` from the repo root (no install needed — the root `conftest.py`
+puts this checkout on `sys.path`). See `tests/README.md` for the full map.
 
-`tests/` contains regression/native tests. In particular,
-`test_stub_runtime_policy` verifies the CPython bootstrap policy rather than
-instruction relocation:
+The engine is platform-agnostic, so the mechanical tests (lifecycle, native
+calls, relocation matrix, safety, transaction/rollback, patch strategy, atomic
+write, stolen-region mapping, batched enable) run from one file each on both
+OSes. Only genuinely OS-specific tests are gated with `@pytest.mark.skipif`:
+thread suspension and context read, Windows `CONTEXT` / `MEMORY_BASIC_INFORMATION`
+layout, a real WinAPI hook, and the native-stub bootstrap policy
+(`test_stub_policy_{linux,windows}`). The stub-policy tests verify the CPython
+bootstrap rather than instruction relocation: a same-version existing Python is
+reused, Linux refuses a mismatched already-loaded runtime, and `hook.py` executes
+under module name `hookie_<id>`.
 
-- same-version existing Python is reused;
-- Linux refuses a mismatched already-loaded Python runtime;
-- `hook.py` executes under module name `hookie_<id>`.
-
-x86 native tests require a real 32-bit Python/process and 32-bit toolchain.
+Pointer-size-dependent tests read `ctypes.sizeof(c_void_p)` and assert the
+matching values, so there are no separate x86/x64 files. On Windows, run the
+suite under **both** a 32-bit and a 64-bit Python (`py -3-32 -m pytest` and
+`py -3-64 -m pytest`) to exercise both. x86 native tests require a real 32-bit
+Python/process and a 32-bit toolchain.

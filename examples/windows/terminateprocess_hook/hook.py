@@ -12,6 +12,9 @@ psapi = ctypes.windll.psapi
 kernelbase.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
 kernelbase.TerminateProcess.restype = wintypes.BOOL
 
+# OpenProcess/GetModuleBaseNameW prototipleri olmadan ctypes, HANDLE'ı
+# varsayılan 32-bit int sanar; x64'te bu handle değerini keser ve
+# GetModuleBaseNameW geçersiz bir handle ile çağrılır.
 kernelbase.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
 kernelbase.OpenProcess.restype = wintypes.HANDLE
 

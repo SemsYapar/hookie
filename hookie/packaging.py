@@ -66,6 +66,21 @@ def resolve_embeddable(arch: str, py_version: str, provided: Path | None,
             return dst
         zpath = provided                      # kullanıcı zip verdi
     else:
+        # python.org publishes embeddable zips only for complete X.Y.Z releases,
+        # so a bare X.Y would build a 404 URL. Fail early with a clear message
+        # instead of letting urlretrieve raise an opaque HTTP 404. (create-so on
+        # Linux accepts X.Y and resolves the latest micro from python-build-
+        # standalone; Windows embeddables have no such index, hence the asymmetry.)
+        parts = py_version.split(".")
+        if len(parts) < 3 or not all(p.isdigit() for p in parts[:3]):
+            raise ValueError(
+                f"Windows needs a full CPython version X.Y.Z, got {py_version!r}. "
+                "python.org ships embeddable zips only for complete releases "
+                "(e.g. 3.12.8), so --py-version must include the micro on Windows. "
+                "create-so (Linux) accepts X.Y and picks the latest micro automatically. "
+                "Choose a release from https://www.python.org/downloads/windows/ "
+                "or pass a local runtime with --embeddable."
+            )
         url = _EMBED_URL.format(v=py_version, p=suffix)
         zpath = work / f"embed-{py_version}-{suffix}.zip"
         print(f"  downloading: {url}")
