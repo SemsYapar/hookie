@@ -2,14 +2,14 @@
 import ctypes
 from ctypes import wintypes
 import hookie
+from hookie import resolve
 
 _engine = hookie.HookEngine()
 _hooks = []
 
-kernel32 = ctypes.windll.kernel32
-kernel32.Beep.argtypes = [wintypes.DWORD, wintypes.DWORD]
-kernel32.Beep.restype = wintypes.BOOL
-_target = ctypes.cast(kernel32.Beep, ctypes.c_void_p).value
+_ARGTYPES = [wintypes.DWORD, wintypes.DWORD]
+_RESTYPE = wintypes.BOOL
+_target = resolve.export("kernel32.dll", "Beep")
 
 
 def _detour(frequency, duration):
@@ -22,8 +22,8 @@ def _detour(frequency, duration):
 _hook = _engine.create_hook(
     _target,
     _detour,
-    kernel32.Beep.argtypes,
-    kernel32.Beep.restype,
+    _ARGTYPES,
+    _RESTYPE,
     prototype_factory=(ctypes.WINFUNCTYPE if ctypes.sizeof(ctypes.c_void_p) == 4 else ctypes.CFUNCTYPE),
 )
 _hook.enable()

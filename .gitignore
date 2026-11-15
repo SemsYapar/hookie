@@ -10,3 +10,9 @@ dist/
 htmlcov/
 deps/
 builds/
+
+# Built native stubs — CI cross-compiles the Windows .dll into the wheel at
+# release time; they are never committed. Linux stubs compile on the user's host.
+hookie/stubs/*/hookie_stub.dll
+hookie/stubs/*/hookie_stub.so
+*.obj

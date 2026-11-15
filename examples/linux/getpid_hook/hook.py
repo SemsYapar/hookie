@@ -1,14 +1,14 @@
 """Demonstrate return-value rewriting by intercepting libc getpid()."""
 import ctypes
 import hookie
+from hookie import resolve
 
 _engine = hookie.HookEngine()
 _hooks = []
 
-libc = ctypes.CDLL(None)
-libc.getpid.argtypes = []
-libc.getpid.restype = ctypes.c_int
-_target = ctypes.cast(libc.getpid, ctypes.c_void_p).value
+# resolve.export wraps dlsym; module=None searches the process's global symbols,
+# so libc's getpid is found without naming the exact soname.
+_target = resolve.export(None, "getpid")
 
 
 def _detour():

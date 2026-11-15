@@ -1,0 +1,74 @@
+name: Bug report
+description: Report a crash or incorrect behaviour in hookie
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. The single most useful thing you can attach is
+        **hookie's log**, which covers both the native stub bootstrap and the
+        Python-side hook install — i.e. the process where the problem happened.
+        See the "hookie log" field below for how to produce it.
+  - type: input
+    id: version
+    attributes:
+      label: hookie version
+      description: "Output of `pip show hookie` (Version:), or the git commit."
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: dropdown
+    id: arch
+    attributes:
+      label: Architecture
+      options:
+        - x64 (64-bit)
+        - x86 (32-bit)
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: "`python --version`. On Windows, say whether it is 32- or 64-bit."
+      placeholder: "3.14.0 (64-bit)"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Include the smallest hook.py / target that reproduces it if you can.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: hookie log
+      description: |
+        Paste the log that covers the crash. How to produce it:
+
+        - **Install log (always available):** before installing hooks, call
+          `hookie.log_to_file()`. It records, per hook, the patch strategy, stolen
+          size, whether the write was atomic, and the thread policy.
+        - **Stub bootstrap trace (injection):** build the payload with `--debug`
+          (`hookie create-dll hook.py --debug`). The stub then logs its CPython
+          bootstrap steps and an architecture banner.
+        - Both default to `%TEMP%\hookie.log` on Windows / `$TMPDIR/hookie.log`
+          (or `/tmp/hookie.log`) on Linux, and both honour the `HOOKIE_LOG`
+          environment variable — point it at one path to get a single combined
+          log.
+
+        Reproduce the problem, then paste the relevant part of that file here.
+      render: shell
+    validations:
+      required: false

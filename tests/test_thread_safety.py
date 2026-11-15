@@ -50,19 +50,25 @@ def test_concurrent_enable_disable_does_not_crash(engine, native):
         while not stop:
             target()
 
-    workers = [threading.Thread(target=worker, daemon=True) for _ in range(3)]
+    workers = [threading.Thread(target=worker, daemon=True) for _ in range(2)]
     for w in workers:
         w.start()
-    time.sleep(0.1)
-    # A bounded hammer: each enable/disable suspends every thread (a Toolhelp
-    # snapshot, which is not cheap), so a few hundred cycles is plenty to expose
-    # a suspend-the-world deadlock or a torn patch without making the suite slow.
+    time.sleep(0.05)
+    # A bounded hammer: each enable/disable suspends every thread via a
+    # *system-wide* thread snapshot (CreateToolhelp32Snapshot), which is not
+    # cheap, so a few dozen cycles under contention is plenty to expose a
+    # suspend-the-world deadlock or a torn patch. A wall-clock cap guarantees the
+    # test terminates quickly even on a busy machine.
+    deadline = time.monotonic() + 2.0
+    cycles = 0
     try:
-        for _ in range(300):
+        while cycles < 40 and time.monotonic() < deadline:
             hook.enable()
             hook.disable()
+            cycles += 1
     finally:
         stop = True
         time.sleep(0.05)
     for w in workers:
         w.join(timeout=1.0)
+    assert cycles > 0

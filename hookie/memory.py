@@ -227,6 +227,39 @@ class MemoryManager:
         return 0
 
     @staticmethod
+    def writable_extent(address: int, want: int) -> int:
+        """Bytes writable from *address* without a protection change, capped at
+        *want*. Mirrors :meth:`readable_extent` but checks write permission, so a
+        caller can skip the protect-flip when the page is already writable."""
+        if address <= 0 or want <= 0:
+            raise ValueError("invalid address/want")
+        if IS_WINDOWS:
+            mbi = MEMORY_BASIC_INFORMATION()
+            if not kernel32.VirtualQuery(address, ctypes.byref(mbi), ctypes.sizeof(mbi)):
+                return 0
+            writable = (PAGE_READWRITE, PAGE_WRITECOPY,
+                        PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY)
+            if mbi.State != MEM_COMMIT or (mbi.Protect & PAGE_GUARD) or (mbi.Protect & 0xFF) not in writable:
+                return 0
+            region_end = int(mbi.BaseAddress or 0) + int(mbi.RegionSize)
+            return max(0, min(want, region_end - address))
+        try:
+            with open("/proc/self/maps", "r", encoding="ascii", errors="replace") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) < 2:
+                        continue
+                    a, b = parts[0].split("-")
+                    lo, hi = int(a, 16), int(b, 16)
+                    if lo <= address < hi:
+                        if parts[1][1] != "w":
+                            return 0
+                        return min(want, hi - address)
+        except OSError:
+            return 0
+        return 0
+
+    @staticmethod
     def allocate_near(size: int, low: int, high: int) -> int | None:
         """Allocate a block wholly inside [low, high]."""
         if size <= 0:

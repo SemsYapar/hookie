@@ -1,6 +1,7 @@
 import ctypes
 from ctypes import wintypes
 import hookie
+from hookie import resolve
 
 STATUS_SUCCESS = 0x00000000
 SystemProcessInformation = 5
@@ -62,7 +63,7 @@ def nt_query_system_information_hook(system_information_class, system_informatio
 
     return status
 
-target_addr = ctypes.cast( ntdll.NtQuerySystemInformation, ctypes.c_void_p).value
+target_addr = resolve.export("ntdll.dll", "NtQuerySystemInformation")
 engine = hookie.HookEngine()
 
 hook = engine.create_hook(

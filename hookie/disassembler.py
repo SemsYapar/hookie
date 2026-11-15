@@ -88,3 +88,21 @@ class Disassembler:
         if not is_branch or ins.imm_size == 0 or not ins.operands:
             return None
         return ins.operands[0].imm
+
+    def reference_target(self, ins):
+        """Absolute address a single instruction references, or None.
+
+        A relative branch (call/jmp/jcc/loop with a rel operand) yields the
+        branch target — the actual callee/jumpee. A RIP-relative memory operand
+        (x64 ``[rip+disp]``) yields the address it points at (a global, or a
+        pointer slot for an indirect ``call [rip+disp]``). Capstone already
+        resolves branch immediates to absolute addresses because the real address
+        was given to the disassembler."""
+        bt = self.branch_target(ins)
+        if bt is not None:
+            return bt
+        if self.bits == 64:
+            for op in ins.operands:
+                if op.type == X86_OP_MEM and op.mem.base == X86_REG_RIP:
+                    return ins.address + ins.size + op.mem.disp
+        return None

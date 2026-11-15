@@ -1,6 +1,7 @@
 import hookie
 import ctypes
 from ctypes import wintypes
+from hookie import resolve
 
 PROCESS_QUERY_INFORMATION = 0x0400
 PROCESS_VM_READ = 0x0010
@@ -53,7 +54,7 @@ def terminateprocess_hook(hProcess, uExitCode):
     else:
         return hook.original(hProcess, uExitCode)
 
-target_addr = ctypes.cast(kernelbase.TerminateProcess, ctypes.c_void_p).value
+target_addr = resolve.export("kernelbase.dll", "TerminateProcess")
 engine = hookie.HookEngine()
 hook = engine.create_hook(target_addr, terminateprocess_hook, kernelbase.TerminateProcess.argtypes, kernelbase.TerminateProcess.restype)
 hook.enable()

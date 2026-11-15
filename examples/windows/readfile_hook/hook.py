@@ -1,35 +1,35 @@
 import hookie
 import ctypes
 from ctypes import wintypes
+from hookie import resolve, mem
 
-kernelbase = ctypes.windll.kernelbase
-kernelbase.ReadFile.argtypes = [
+_ARGTYPES = [
     wintypes.HANDLE,
     wintypes.LPVOID,
     wintypes.DWORD,
     wintypes.LPDWORD,
-    ctypes.c_void_p
+    ctypes.c_void_p,
 ]
-kernelbase.ReadFile.restype = wintypes.BOOL
-target_addr = ctypes.cast(kernelbase.ReadFile, ctypes.c_void_p).value
+_RESTYPE = wintypes.BOOL
+target_addr = resolve.export("kernelbase.dll", "ReadFile")
 
 one_shot = True
 def readfile_hook(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped):
     global one_shot
-    bytes_read_ptr = ctypes.cast(lpNumberOfBytesRead, ctypes.POINTER(wintypes.DWORD))  
+    bytes_read_ptr = ctypes.cast(lpNumberOfBytesRead, ctypes.POINTER(wintypes.DWORD))
     if not one_shot:
         bytes_read_ptr.contents.value = 0
         return True
     one_shot = False
     new_buffer = b"this is a hooked text"
-    buf_len = len(new_buffer)   
-    new_buffer = ctypes.create_string_buffer(new_buffer)
-    ctypes.memmove(lpBuffer, new_buffer, buf_len)
-    bytes_read_ptr.contents.value = buf_len
+    # lpBuffer is the caller's output buffer (already writable), so no page-
+    # protection flip is needed — mem.write_bytes(..., protect=False).
+    mem.write_bytes(lpBuffer, new_buffer, protect=False)
+    bytes_read_ptr.contents.value = len(new_buffer)
     return True
 
 engine = hookie.HookEngine()
-hook = engine.create_hook(target_addr, readfile_hook, kernelbase.ReadFile.argtypes, kernelbase.ReadFile.restype)
+hook = engine.create_hook(target_addr, readfile_hook, _ARGTYPES, _RESTYPE)
 
 if __name__ == "__main__":
     target_file = "test.txt"
@@ -44,4 +44,3 @@ if __name__ == "__main__":
         data = f.read()
         print("test.txt data hooked: "+data)
         hook.disable()
-        

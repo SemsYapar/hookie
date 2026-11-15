@@ -60,6 +60,11 @@ Cross-platform (run on Windows and Linux):
 - `test_batch_enable.py` — `enable_all` / `disable_all` round-trip, and the
   contract that the whole group funnels through one `modify_threads_batch` call
   (a single suspend/resume) instead of one per hook.
+- `test_mem.py` — `hookie.mem` read/write/chain against allocated buffers, and
+  that `write_bytes(protect=True)` can overwrite a read-only page.
+- `test_resolve.py` — `hookie.resolve` module_base/export/modules/scan against a
+  system module (libc on Linux, kernel32 on Windows), plus `rip_target` against
+  assembled call/lea bytes.
 - `test_relocate_stolen.py` — stolen-region addresses map to their trampoline
   copies (used when relocating a suspended thread).
 - `test_packaging.py` — payload identity, safe-tar extraction, version guards.

@@ -4,6 +4,47 @@ All notable changes to Hookie are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-11-15
+
+Adds two small helper modules for turning a name, pattern, or reference into an
+address to hook — all in-process, cross-platform, and honest about what runs
+underneath (most are thin ctypes wrappers; the docstrings say which).
+
+### Added
+
+- **`hookie.resolve`** — target resolution:
+  - `module_base(name=None)` — a module's base address (GetModuleHandleW /
+    `/proc/self/maps`).
+  - `export(module, name)` — address of an exported symbol (GetProcAddress /
+    dlsym).
+  - `modules()` — loaded modules as `(name, base, size)`.
+  - `scan(pattern, module=None)` — byte-pattern (AOB) search over a module's
+    executable code, with `??` wildcards, for functions that have no name. This
+    one has no ctypes equivalent.
+  - `rip_target(addr)` — decode the instruction at `addr` and return the address
+    it references (a relative `call`/`jmp` target, or a RIP-relative operand), so
+    `rip_target(scan(...))` turns a matched call site into the real function.
+- **`hookie.mem`** — in-process memory: `read_bytes`, `read_ptr`, `write_bytes`,
+  `read_chain`. All share one `protect` flag with a consistent meaning:
+  `protect=True` (default) checks the page and temporarily flips its protection
+  only if the operation needs it (then restores, flushing the instruction cache
+  for code), so a read-only code write succeeds and a bad address raises instead
+  of crashing; `protect=False` does the raw operation with no check, for a page
+  you know already permits it (e.g. a caller buffer in a hot detour). Backed by
+  `MemoryManager` (VirtualProtect / mprotect).
+- The examples now resolve their targets with `resolve.export` and write with
+  `mem.write_bytes` instead of hand-rolled ctypes.
+
+### Changed
+
+- **The wheel now ships prebuilt Windows stubs.** The release workflow
+  cross-compiles the x64 and x86 Windows stub DLLs with MinGW-w64 and includes
+  them in the wheel, so `create-dll` works on Windows with no C compiler
+  installed (a compiler is still needed for `--debug` or `--stub-src`). Linux
+  stubs are intentionally not prebuilt — a `.so` is tied to the build host's
+  glibc — and keep compiling on the user's machine. A bug-report issue template
+  was added that asks for hookie's log.
+
 ## [0.2.1] - 2026-11-15
 
 A maintenance release: it moves the payload launch logic out of the native stubs
@@ -113,6 +154,7 @@ Initial release: Python-native inline hooking with trampolines for x86/x64 on
 Windows and Linux, plus `create-dll` / `create-so` payload packaging and
 process injection.
 
+[0.3.0]: https://github.com/SemsYapar/hookie/releases/tag/v0.3.0
 [0.2.1]: https://github.com/SemsYapar/hookie/releases/tag/v0.2.1
 [0.2.0]: https://github.com/SemsYapar/hookie/releases/tag/v0.2.0
 [0.1.0]: https://github.com/SemsYapar/hookie/releases/tag/v0.1.0

@@ -2,6 +2,7 @@ import hookie
 import ctypes
 from ctypes import wintypes
 import os
+from hookie import resolve, mem
 
 kernelbase = ctypes.windll.kernelbase
 
@@ -79,18 +80,19 @@ def mapviewoffile_hook(hFileMappingObject, dwDesiredAccess, dwFileOffsetHigh, dw
 
             if dwNumberOfBytesToMap >= buf_len:
                 ctypes.memset(data_ptr, 0, dwNumberOfBytesToMap)
-                ctypes.memmove(data_ptr, new_buffer, buf_len)
+                # data_ptr is a copy-on-write view (already writable) -> protect=False.
+                mem.write_bytes(data_ptr, bytes(new_buffer)[:buf_len], protect=False)
 
             return data_ptr
         
     data_ptr = hook.original(hFileMappingObject, dwDesiredAccess, dwFileOffsetHigh, dwFileOffsetLow, dwNumberOfBytesToMap)
     return data_ptr
 
-target_addr = ctypes.cast(kernelbase.MapViewOfFile, ctypes.c_void_p).value
+target_addr = resolve.export("kernelbase.dll", "MapViewOfFile")
 engine = hookie.HookEngine()
 hook = engine.create_hook(target_addr, mapviewoffile_hook, kernelbase.MapViewOfFile.argtypes, kernelbase.MapViewOfFile.restype)
 hook.enable()
 
-target_addr2 = ctypes.cast(kernelbase.CreateFileMappingW, ctypes.c_void_p).value
+target_addr2 = resolve.export("kernelbase.dll", "CreateFileMappingW")
 hook2 = engine.create_hook(target_addr2, createfilemappingw_hook, kernelbase.CreateFileMappingW.argtypes, kernelbase.CreateFileMappingW.restype)
 hook2.enable()

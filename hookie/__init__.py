@@ -1,4 +1,4 @@
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 import logging as _logging
 
@@ -8,6 +8,7 @@ from .trampoline import TrampolineBuilder
 from .disassembler import Disassembler
 from .arch.x64 import x64Arch
 from .arch.x86 import x86Arch
+from . import resolve, mem
 
 
 def log_to_file(path: str | None = None, *, level: int = _logging.INFO,
@@ -50,4 +51,6 @@ __all__ = [
     "x86Arch",
     "log_to_file",
     "logger",
+    "resolve",
+    "mem",
 ]

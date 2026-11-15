@@ -1,14 +1,14 @@
 """Prefix strings passed to libc puts()."""
 import ctypes
 import hookie
+from hookie import resolve
 
 _engine = hookie.HookEngine()
 _hooks = []
 
-libc = ctypes.CDLL(None)
-libc.puts.argtypes = [ctypes.c_char_p]
-libc.puts.restype = ctypes.c_int
-_target = ctypes.cast(libc.puts, ctypes.c_void_p).value
+_ARGTYPES = [ctypes.c_char_p]
+_RESTYPE = ctypes.c_int
+_target = resolve.export(None, "puts")
 
 
 def _detour(text):
@@ -20,8 +20,8 @@ def _detour(text):
 _hook = _engine.create_hook(
     _target,
     _detour,
-    libc.puts.argtypes,
-    libc.puts.restype,
+    _ARGTYPES,
+    _RESTYPE,
 )
 _hook.enable()
 _hooks.append(_hook)
